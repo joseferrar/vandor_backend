@@ -1,4 +1,16 @@
+const mongoose = require("mongoose");
 const Vendor = require("../models/Vendor");
+
+/**
+ * Standalone MongoDB rejects retryable writes (error code 20).
+ * The driver defaults this on, so force it off before every vendor write.
+ */
+function disableRetryableWrites() {
+  const client = mongoose.connection.getClient?.();
+  if (client?.s?.options) {
+    client.s.options.retryWrites = false;
+  }
+}
 
 /**
  * @route   GET /api/vendors
@@ -96,6 +108,8 @@ exports.createVendor = async (req, res) => {
       });
     }
 
+    disableRetryableWrites();
+
     const vendor = new Vendor({
       organizationId,
       type: type || "Organization",
@@ -167,6 +181,7 @@ exports.getVendorById = async (req, res) => {
  */
 exports.updateVendor = async (req, res) => {
   try {
+    disableRetryableWrites();
     const filter = { _id: req.params.id, ...req.tenantFilter };
     const vendor = await Vendor.findOne(filter);
 
@@ -217,6 +232,7 @@ exports.updateVendor = async (req, res) => {
  */
 exports.deleteVendor = async (req, res) => {
   try {
+    disableRetryableWrites();
     const filter = { _id: req.params.id, ...req.tenantFilter };
     const deleted = await Vendor.findOneAndDelete(filter);
 
@@ -240,6 +256,7 @@ exports.deleteVendor = async (req, res) => {
  */
 exports.updateVendorStatus = async (req, res) => {
   try {
+    disableRetryableWrites();
     const { status } = req.body;
     const filter = { _id: req.params.id, ...req.tenantFilter };
 

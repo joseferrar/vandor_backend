@@ -4,34 +4,70 @@ const User = require("../models/User");
 const Vendor = require("../models/Vendor");
 
 /**
+ * Standalone MongoDB accepts startTransaction() and only fails on the first
+ * write ("Transaction numbers are only allowed on a replica set member or mongos").
+ * Cache the deployment check so later requests skip the transaction path.
+ */
+let transactionsSupported;
+
+function transactionUnsupported(error) {
+  const sources = [error, error?.originalError, error?.errorResponse];
+  return sources.some((item) => {
+    if (!item) return false;
+    if (item.code === 20) return true;
+    const message = item.message || item.errmsg || "";
+    return /transaction numbers are only allowed/i.test(message)
+      || /does not support retryable writes/i.test(message);
+  });
+}
+
+async function deploymentSupportsTransactions() {
+  if (transactionsSupported !== undefined) return transactionsSupported;
+  try {
+    const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+    transactionsSupported = Boolean(hello.setName || hello.msg === "isdbgrid");
+  } catch {
+    transactionsSupported = false;
+  }
+  return transactionsSupported;
+}
+
+async function endSessionQuietly(session) {
+  if (!session || session.hasEnded) return;
+  try {
+    if (session.inTransaction()) await session.abortTransaction();
+  } catch (_) {}
+  try {
+    await session.endSession();
+  } catch (_) {}
+}
+
+/**
  * Helper to run an atomic operation with MongoDB transactions if supported,
  * otherwise with graceful fallback for standalone local DBs.
  */
 async function runAtomic(fn) {
-  let session = null;
-  try {
-    session = await mongoose.startSession();
-    session.startTransaction();
-  } catch (err) {
-    // Standalone MongoDB without replica set does not support transactions
-    session = null;
+  if (!(await deploymentSupportsTransactions())) {
+    return fn(null);
   }
 
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const result = await fn(session);
-    if (session) {
-      await session.commitTransaction();
-      session.endSession();
-    }
+    await session.commitTransaction();
     return result;
   } catch (error) {
-    if (session) {
+    await endSessionQuietly(session);
+    if (!transactionUnsupported(error)) throw error;
+    transactionsSupported = false;
+    return fn(null);
+  } finally {
+    if (session && !session.hasEnded) {
       try {
-        await session.abortTransaction();
-        session.endSession();
+        await session.endSession();
       } catch (_) {}
     }
-    throw error;
   }
 }
 
