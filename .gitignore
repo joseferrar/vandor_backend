@@ -1,6 +1,6 @@
 # node modules
 node_modules/
-.env
+
 npm-debug.log*
 # temp files
 temp
