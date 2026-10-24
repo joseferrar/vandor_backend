@@ -59,7 +59,7 @@ app.use(`/api/${apiVersion}/invoices`, invoiceRoutes);
 app.get(`/api/${apiVersion}/health`, (req, res) => {
   res.json({
     status: "ok",
-    message: "Multi-Tenant Vendor Management API is running",
+    message: "Multi-Tenant Vendor Management API is running done",
     timestamp: new Date().toISOString(),
   });
 });
