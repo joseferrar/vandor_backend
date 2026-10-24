@@ -6,40 +6,51 @@ steps:
       EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
       EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
 
+    shell: bash
     run: |
-      set -eu
+      set -euo pipefail
 
-      test -n "$EC2_HOST"
-      test -n "$EC2_USER"
-      test -n "$EC2_SSH_KEY"
-      test -n "$EC2_APP_DIR"
+      # Validate required secrets
+      : "${EC2_HOST:?Missing EC2_HOST secret}"
+      : "${EC2_USER:?Missing EC2_USER secret}"
+      : "${EC2_SSH_KEY:?Missing EC2_SSH_KEY secret}"
+      : "${EC2_APP_DIR:?Missing EC2_APP_DIR secret}"
 
+      # Configure SSH
       mkdir -p ~/.ssh
       chmod 700 ~/.ssh
 
       printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
       chmod 600 ~/.ssh/deploy_key
 
+      # Add EC2 host key
       ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
       chmod 600 ~/.ssh/known_hosts
 
-      APP_DIR_Q=$(printf '%q' "$EC2_APP_DIR")
-
-      ssh -i ~/.ssh/deploy_key \
+      # Deploy to EC2
+      ssh \
+        -i ~/.ssh/deploy_key \
         -o IdentitiesOnly=yes \
         -o StrictHostKeyChecking=yes \
         "$EC2_USER@$EC2_HOST" \
-        "APP_DIR=$APP_DIR_Q bash -s" <<'REMOTE'
-          set -eu
+        "bash -s -- '$EC2_APP_DIR'" <<'REMOTE'
+      set -euo pipefail
 
-          cd "$APP_DIR"
+      APP_DIR="$1"
 
-          git fetch origin master
-          git reset --hard origin/master
+      cd "$APP_DIR"
 
-          npm ci --omit=dev
+      echo "Pulling latest code..."
+      git pull --ff-only origin master
 
-          pm2 restart server --update-env
-          pm2 save
-          pm2 status
+      echo "Installing production dependencies..."
+      npm ci --omit=dev
+
+      echo "Restarting Node.js application..."
+      pm2 restart server --update-env
+
+      pm2 save
+      pm2 status
+
+      echo "Deployment completed successfully."
       REMOTE
