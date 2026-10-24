@@ -1,40 +1,78 @@
-name: Deploy to Production
+name: Deploy to AWS EC2
 
 on:
   push:
-    branches: ["master"]
+    branches:
+      - master
+  workflow_dispatch:
 
 jobs:
   deploy:
+    name: Deploy to EC2
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install SSH client
+      - name: Deploy Node.js App via SSH
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openssh-client
+          set -euo pipefail
 
-      - name: Setup SSH keys
-        run: |
+          # 1. Validate required GitHub Secrets
+          : "${EC2_HOST:?Missing EC2_HOST secret in GitHub repository settings}"
+          : "${EC2_USER:?Missing EC2_USER secret in GitHub repository settings}"
+          : "${EC2_SSH_KEY:?Missing EC2_SSH_KEY secret in GitHub repository settings}"
+          : "${EC2_APP_DIR:?Missing EC2_APP_DIR secret in GitHub repository settings}"
+
+          # 2. Configure SSH key and known_hosts
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
 
-      - name: Test SSH Connection
-        run: ssh -v -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "echo 'Connection successful'"
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
-      - name: Deploy to EC2 instance
-        run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          # 3. Connect to EC2 and deploy
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -s' -- "$EC2_APP_DIR" << 'EOF'
+          set -euo pipefail
+
+          APP_DIR="$1"
+
+          # Load NVM if Node/PM2 were installed via NVM
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          nvm use 22.12.0
-          cd ~/github-pipeline-ts
-          git pull origin master
-          npm ci
-          npm run build
-          pm2 restart github-pipeline-test
+          if [ -s "$NVM_DIR/nvm.sh" ]; then
+            . "$NVM_DIR/nvm.sh"
+          fi
+
+          echo "==> Navigating to $APP_DIR"
+          cd "$APP_DIR"
+
+          echo "==> Pulling latest code from origin/master"
+          git fetch origin master
+          git reset --hard origin/master
+
+          echo "==> Installing production dependencies"
+          npm ci --omit=dev
+
+          echo "==> Restarting PM2 process (server)"
+          if pm2 describe server > /dev/null 2>&1; then
+            pm2 restart server --update-env
+          else
+            pm2 start server.js --name server
+          fi
+
+          pm2 save
+          pm2 status
+          echo "==> Deployment completed successfully!"
           EOF
