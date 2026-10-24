@@ -1,47 +1,45 @@
+steps:
+  - name: Deploy through SSH
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
 
-name: Deploy Node.js to AWS EC2
+    run: |
+      set -eu
 
-on:
-  push:
-    branches:
-      - master
+      test -n "$EC2_HOST"
+      test -n "$EC2_USER"
+      test -n "$EC2_SSH_KEY"
+      test -n "$EC2_APP_DIR"
 
-permissions:
-  contents: read
+      mkdir -p ~/.ssh
+      chmod 700 ~/.ssh
 
-jobs:
-  deploy:
-    name: Deploy to EC2
-    runs-on: ubuntu-latest
+      printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+      chmod 600 ~/.ssh/deploy_key
 
-    steps:
-      - name: Deploy through SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
-        run: |
+      ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+      chmod 600 ~/.ssh/known_hosts
+
+      APP_DIR_Q=$(printf '%q' "$EC2_APP_DIR")
+
+      ssh -i ~/.ssh/deploy_key \
+        -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        "$EC2_USER@$EC2_HOST" \
+        "APP_DIR=$APP_DIR_Q bash -s" <<'REMOTE'
           set -eu
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          cd "$APP_DIR"
 
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          git fetch origin master
+          git reset --hard origin/master
 
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          npm ci --omit=dev
 
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" \
-            "APP_DIR='$EC2_APP_DIR' bash -s" <<'REMOTE'
-              set -eu
-              cd "$APP_DIR"
-              git pull --ff-only origin master
-              npm ci --omit=dev
-              pm2 restart server --update-env
-              pm2 save
-              pm2 status
-          REMOTE
+          pm2 restart server --update-env
+          pm2 save
+          pm2 status
+      REMOTE
