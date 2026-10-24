@@ -41,7 +41,7 @@ jobs:
               cd "$APP_DIR"
               git pull --ff-only origin master
               npm ci --omit=dev
-              pm2 restart racemath-api --update-env
+              pm2 restart server --update-env
               pm2 save
               pm2 status
           REMOTE
