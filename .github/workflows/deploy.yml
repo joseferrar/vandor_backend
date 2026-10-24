@@ -1,56 +1,68 @@
-steps:
-  - name: Deploy through SSH
-    env:
-      EC2_HOST: ${{ secrets.EC2_HOST }}
-      EC2_USER: ${{ secrets.EC2_USER }}
-      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-      EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+name: Deploy to EC2
 
-    shell: bash
-    run: |
-      set -euo pipefail
+on:
+  push:
+    branches:
+      - master
 
-      # Validate required secrets
-      : "${EC2_HOST:?Missing EC2_HOST secret}"
-      : "${EC2_USER:?Missing EC2_USER secret}"
-      : "${EC2_SSH_KEY:?Missing EC2_SSH_KEY secret}"
-      : "${EC2_APP_DIR:?Missing EC2_APP_DIR secret}"
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-      # Configure SSH
-      mkdir -p ~/.ssh
-      chmod 700 ~/.ssh
+    steps:
+      - name: Deploy Node.js application
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
 
-      printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
-      chmod 600 ~/.ssh/deploy_key
+        run: |
+          set -euo pipefail
 
-      # Add EC2 host key
-      ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-      chmod 600 ~/.ssh/known_hosts
+          # Validate required GitHub secrets
+          : "${EC2_HOST:?Missing EC2_HOST secret}"
+          : "${EC2_USER:?Missing EC2_USER secret}"
+          : "${EC2_SSH_KEY:?Missing EC2_SSH_KEY secret}"
+          : "${EC2_APP_DIR:?Missing EC2_APP_DIR secret}"
 
-      # Deploy to EC2
-      ssh \
-        -i ~/.ssh/deploy_key \
-        -o IdentitiesOnly=yes \
-        -o StrictHostKeyChecking=yes \
-        "$EC2_USER@$EC2_HOST" \
-        "bash -s -- '$EC2_APP_DIR'" <<'REMOTE'
-      set -euo pipefail
+          # Configure SSH
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
 
-      APP_DIR="$1"
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
-      cd "$APP_DIR"
+          # Add EC2 host key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
-      echo "Pulling latest code..."
-      git pull --ff-only origin master
+          # Connect and deploy
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -s' -- "$EC2_APP_DIR" <<'REMOTE'
+          set -euo pipefail
 
-      echo "Installing production dependencies..."
-      npm ci --omit=dev
+          APP_DIR="$1"
 
-      echo "Restarting Node.js application..."
-      pm2 restart server --update-env
+          cd "$APP_DIR"
 
-      pm2 save
-      pm2 status
+          echo "Fetching latest code..."
+          git fetch origin master
+          git reset --hard origin/master
 
-      echo "Deployment completed successfully."
-      REMOTE
+          echo "Installing production dependencies..."
+          npm ci --omit=dev
+
+          echo "Restarting PM2 application..."
+          pm2 restart server --update-env
+
+          pm2 save
+          pm2 status
+
+          echo "Deployment completed successfully."
+          REMOTE
