@@ -9,16 +9,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: production-deploy
-  cancel-in-progress: false
-
 jobs:
   deploy:
+    name: Deploy to EC2
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy application on EC2
+      - name: Deploy through SSH
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
@@ -37,22 +34,14 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
           ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
             "APP_DIR='$EC2_APP_DIR' bash -s" <<'REMOTE'
               set -eu
-
               cd "$APP_DIR"
-
               git pull --ff-only origin master
-
-              if [ -f package-lock.json ]; then
-                npm ci --omit=dev
-              else
-                npm install --omit=dev
-              fi
-
-              pm2 restart server --update-env
-
+              npm ci --omit=dev
+              pm2 restart racemath-api --update-env
               pm2 save
               pm2 status
           REMOTE
