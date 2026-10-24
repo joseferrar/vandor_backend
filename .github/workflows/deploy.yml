@@ -4,7 +4,7 @@ name: Deploy Node.js to AWS EC2
 on:
   push:
     branches:
-      - main
+      - master
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
 
               cd "$APP_DIR"
 
-              git pull --ff-only origin main
+              git pull --ff-only origin master
 
               if [ -f package-lock.json ]; then
                 npm ci --omit=dev
